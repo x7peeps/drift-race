@@ -313,6 +313,7 @@ function resolveCollisions() {
         const sp = state.pos.clone().add(new THREE.Vector3(nx*1.4, 0.4, nz*1.4));
         emitSmoke(sp, 0.9);
       }
+      if (nowSec() - lastCollSfx > 0.4) { sfxCrash(); lastCollSfx = nowSec(); }
     }
   }
 }
@@ -341,6 +342,7 @@ function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<
 
 // 游戏开始(关大厅)
 document.getElementById('btnStart').onclick = () => {
+  initAudio();
   const name = document.getElementById('playerName').value.trim();
   if (name) { myName = name; localStorage.setItem('drift_name', name); }
   document.getElementById('lobby').style.display = 'none';
@@ -665,6 +667,7 @@ function updatePowerups(dt) {
       else { shieldUntil = t + 8.0; }
       // 拾取特效: 一圈粒子
       for (let i = 0; i < 8; i++) emitSmoke(state.pos.clone().add(new THREE.Vector3(0, .6, 0)), 1.0);
+      sfxBlip(pu.kind === 'boost' ? [523, 659, 784] : [392, 523], 0.08, 0.18);
     }
   }
   // 护盾视觉: 本机车外圈蓝光球
@@ -679,6 +682,64 @@ function updatePowerups(dt) {
   } else if (shieldMesh) shieldMesh.visible = false;
 }
 initPowerups();
+
+
+/* ---- M3-D: WebAudio 程序化音效 ---- */
+let AC = null, engineOsc = null, engineGain = null, engineFilter = null, skidGain = null, skidSrc = null;
+function initAudio() {
+  if (AC) { AC.resume(); return; }
+  AC = new (window.AudioContext || window.webkitAudioContext)();
+  engineOsc = AC.createOscillator(); engineOsc.type = 'sawtooth'; engineOsc.frequency.value = 55;
+  engineFilter = AC.createBiquadFilter(); engineFilter.type = 'lowpass'; engineFilter.frequency.value = 400;
+  engineGain = AC.createGain(); engineGain.gain.value = 0.0;
+  engineOsc.connect(engineFilter); engineFilter.connect(engineGain); engineGain.connect(AC.destination);
+  engineOsc.start();
+  const len = AC.sampleRate * 1;
+  const buf = AC.createBuffer(1, len, AC.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+  skidSrc = AC.createBufferSource(); skidSrc.buffer = buf; skidSrc.loop = true;
+  const bp = AC.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2400; bp.Q.value = 1.2;
+  skidGain = AC.createGain(); skidGain.gain.value = 0;
+  skidSrc.connect(bp); bp.connect(skidGain); skidGain.connect(AC.destination);
+  skidSrc.start();
+}
+function sfxEngine(speedKmh, dt) {
+  if (!engineGain) return;
+  const t = AC.currentTime;
+  const norm = Math.min(1, speedKmh / 180);
+  engineOsc.frequency.setTargetAtTime(50 + norm * 160, t, 0.08);
+  engineFilter.frequency.setTargetAtTime(300 + norm * 2200, t, 0.08);
+  engineGain.gain.setTargetAtTime(0.05 + norm * 0.09, t, 0.1);
+}
+function sfxSkid(amount) {
+  if (!skidGain) return;
+  skidGain.gain.setTargetAtTime(Math.min(0.16, amount * 0.28), AC.currentTime, 0.06);
+}
+function sfxBlip(freqs, dur=0.09, vol=0.22, type='square') {
+  if (!AC) return;
+  freqs.forEach((f, i) => {
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = type; o.frequency.value = f;
+    const t0 = AC.currentTime + i * dur;
+    g.gain.setValueAtTime(vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    o.connect(g); g.connect(AC.destination);
+    o.start(t0); o.stop(t0 + dur + 0.02);
+  });
+}
+function sfxCrash() {
+  if (!AC) return;
+  const len = AC.sampleRate * 0.25;
+  const buf = AC.createBuffer(1, len, AC.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random()*2-1) * Math.pow(1 - i/len, 2);
+  const s = AC.createBufferSource(); s.buffer = buf;
+  const lp = AC.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900;
+  const g = AC.createGain(); g.gain.value = 0.5;
+  s.connect(lp); lp.connect(g); g.connect(AC.destination); s.start();
+}
+let lastCollSfx = 0;
 
 // ---- 输入 ----
 const keys = {};
@@ -856,6 +917,8 @@ function tick() {
     } else comboEl.style.opacity = 0;
   }
 
+  sfxEngine(Math.abs(state.speedMps)*3.6, dt);
+  sfxSkid(state.driftAmount);
   tickRemoteCars(dt);
   tickRemoteBuff(dt);
   resolveCollisions();
