@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>暴力漂移赛车 M1 — Drift Demo</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { overflow:hidden; background:#0a0e14; font-family:-apple-system,sans-serif; }
+  #hud { position:fixed; top:16px; left:16px; color:#e8eaf0; z-index:10;
+         background:rgba(10,14,20,.55); backdrop-filter:blur(8px);
+         border-radius:12px; padding:14px 18px; min-width:190px; }
+  #hud .speed { font-size:38px; font-weight:800; letter-spacing:-1px; }
+  #hud .speed small { font-size:14px; font-weight:400; opacity:.6; margin-left:4px; }
+  #hud .row { display:flex; justify-content:space-between; gap:18px; font-size:13px; margin-top:6px; opacity:.85; }
+  #hud .drift-val { color:#ffb347; font-weight:700; }
+  #hud .score-val { color:#7dd87d; font-weight:700; }
+  #combo { position:fixed; top:16px; right:16px; text-align:right; color:#ffb347; z-index:10; opacity:0; transition:opacity .3s; }
+  #combo .x { font-size:42px; font-weight:900; text-shadow:0 0 24px rgba(255,179,71,.6); }
+  #combo .label { font-size:13px; opacity:.8; }
+  #tips { position:fixed; bottom:16px; left:50%; transform:translateX(-50%);
+          color:rgba(232,234,240,.55); font-size:12.5px; z-index:10; text-align:center; }
+  #tips kbd { background:rgba(255,255,255,.12); border-radius:4px; padding:1px 6px; margin:0 2px; }
+  /* ---- M2: 大厅/排行榜 ---- */
+  #lobby { position:fixed; inset:0; z-index:20; display:flex; align-items:center; justify-content:center;
+           background:rgba(8,11,17,.82); backdrop-filter:blur(10px); }
+  #lobby .panel { width:520px; max-width:92vw; background:rgba(16,21,30,.95); border:1px solid rgba(255,255,255,.08);
+                  border-radius:16px; padding:28px; color:#e8eaf0; }
+  #lobby h1 { font-size:26px; font-weight:900; letter-spacing:-.5px; margin-bottom:4px; }
+  #lobby .sub { font-size:13px; opacity:.55; margin-bottom:20px; }
+  #lobby input { width:100%; background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.12);
+                 border-radius:10px; padding:12px 14px; color:#fff; font-size:15px; outline:none; margin-bottom:12px; }
+  #lobby input:focus { border-color:#d23b2e; }
+  #lobby .btns { display:flex; gap:10px; margin-bottom:18px; }
+  #lobby button { flex:1; border:0; border-radius:10px; padding:12px 0; font-size:15px; font-weight:700; cursor:pointer; }
+  #lobby .btn-start { background:#d23b2e; color:#fff; }
+  #lobby .btn-start:hover { background:#e85245; }
+  #lobby .lb-title { font-size:13px; opacity:.6; margin-bottom:8px; display:flex; justify-content:space-between; }
+  #lobby table { width:100%; border-collapse:collapse; font-size:13.5px; }
+  #lobby td { padding:7px 4px; border-top:1px solid rgba(255,255,255,.06); }
+  #lobby td.rank { width:34px; opacity:.5; font-weight:800; }
+  #lobby td.name { flex:1; }
+  #lobby td.score { text-align:right; color:#7dd87d; font-weight:700; font-variant-numeric:tabular-nums; }
+  #lobby tr.me td { color:#ffb347; }
+  #submitBox { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:30;
+               background:rgba(16,21,30,.97); border:1px solid rgba(255,255,255,.1); border-radius:16px;
+               padding:26px; color:#e8eaf0; width:360px; max-width:90vw; display:none; text-align:center; }
+  #submitBox h2 { font-size:20px; margin-bottom:6px; }
+  #submitBox .final { font-size:34px; font-weight:900; color:#7dd87d; margin-bottom:16px; }
+  #submitBox input { width:100%; background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.12);
+                     border-radius:10px; padding:11px 13px; color:#fff; font-size:15px; outline:none; margin-bottom:12px; }
+  #submitBox button { width:100%; border:0; border-radius:10px; padding:12px 0; font-size:15px; font-weight:700;
+                      background:#d23b2e; color:#fff; cursor:pointer; }
+  #lbMini { position:fixed; top:16px; right:16px; z-index:9; background:rgba(10,14,20,.5); backdrop-filter:blur(8px);
+            border-radius:12px; padding:10px 14px; color:#e8eaf0; font-size:12px; min-width:170px; display:none; }
+  #lbMini .t { opacity:.55; margin-bottom:5px; font-size:11px; }
+  #lbMini .row { display:flex; justify-content:space-between; gap:10px; padding:2px 0; }
+  #lbMini .row .n { opacity:.85; } #lbMini .row .s { color:#7dd87d; font-variant-numeric:tabular-nums; }
+  #combo { top:16px; right:206px; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <div class="speed"><span id="spd">0</span><small>km/h</small></div>
+  <div class="row"><span>漂移</span><span class="drift-val" id="drift">0%</span></div>
+  <div class="row"><span>漂移分</span><span class="score-val" id="score">0</span></div>
+  <div class="row"><span>圈数</span><span id="lapN">0</span></div>
+  <div class="row"><span>最佳圈</span><span id="lapBest">—</span></div>
+</div>
+<div id="combo"><div class="x" id="comboX">x1.0</div><div class="label">COMBO</div></div>
+<div id="tips"><kbd>W</kbd>油门 <kbd>S</kbd>刹车/倒车 <kbd>A</kbd><kbd>D</kbd>转向 <kbd>Space</kbd>手刹起漂 <kbd>R</kbd>复位 <kbd>Esc</kbd>结束并上传成绩</div>
+<div id="lbMini"><div class="t">全球 TOP 5</div><div id="lbMiniRows"></div></div>
+<div id="lobby">
+  <div class="panel">
+    <h1>🏎️ 暴力漂移赛车</h1>
+    <div class="sub">M2 · 全球排行榜已连线 Supabase · 5人联机开发中</div>
+    <input id="playerName" maxlength="12" placeholder="你的车手名字（用于全球榜）">
+    <div class="btns"><button class="btn-start" id="btnStart">开始漂移 →</button></div>
+    <div style="display:flex; gap:10px; margin-bottom:18px;">
+      <input id="roomCode" maxlength="6" placeholder="房间号(6位)" style="margin-bottom:0; flex:1;">
+      <button id="btnCreateRoom" style="flex:none; padding:12px 16px; background:#2e6bd2;">创建房间</button>
+      <button id="btnJoinRoom" style="flex:none; padding:12px 16px; background:#1a9c5b;">加入</button>
+    </div>
+    <div id="roomStatus" style="font-size:12.5px; opacity:.6; margin-bottom:14px; min-height:16px;"></div>
+    <div class="lb-title"><span>🏆 全球漂移榜 TOP 10</span><span id="lbRefresh">刷新中…</span></div>
+    <table id="lbTable"><tbody id="lbRows"></tbody></table>
+  </div>
+</div>
+<div id="submitBox">
+  <h2>本局漂移成绩</h2>
+  <div class="final" id="finalScore">0</div>
+  <input id="submitName" maxlength="12" placeholder="车手名字">
+  <button id="btnSubmit">上传到全球榜 🏆</button>
+</div>
+<script type="importmap">
+{ "imports": {
+    "three": "./vendor/three.module.js",
+    "three/addons/": "./vendor/addons/",
+    "@supabase/supabase-js": "./vendor/supabase.bundle.mjs",
+    "/node/buffer.mjs": "./vendor/buffer.mjs",
+    "/node/process.mjs": "./vendor/process.mjs",
+    "/node/tty.mjs": "./vendor/tty.mjs",
+    "/node/events.mjs": "./vendor/events.mjs",
+    "/node/async_hooks.mjs": "./vendor/async_hooks.mjs"
+  } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { createClient } from '@supabase/supabase-js';
+
+/* ---- Supabase 全球排行榜 (M2) ---- */
+const SB_URL = 'https://zanztravpgfznlewfpgg.supabase.co';
+const SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inphbnp0cmF2cGdmem5sZXdmcGdnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA2OTcyMzgsImV4cCI6MjEwNjI3MzIzOH0.dt6YE1-Ug9-Bf1zof11tkJ2s3cQMxiWY_HApcvoK81Q';
+const sb = createClient(SB_URL, SB_ANON);
+let myName = localStorage.getItem('drift_name') || '';
+
+async function loadLeaderboard() {
+  try {
+    const { data, error } = await sb.from('scores')
+      .select('player_name, score').order('score', { ascending: false }).limit(10);
+    if (error) throw error;
+    const rows = document.getElementById('lbRows');
+    rows.innerHTML = (data||[]).map((r,i) =>
+      `<tr class="${r.player_name===myName?'me':''}"><td class="rank">${i+1}</td><td class="name">${escapeHtml(r.player_name)}</td><td class="score">${Number(r.score).toLocaleString()}</td></tr>`
+    ).join('') || '<tr><td colspan="3" style="opacity:.4;padding:14px 0;">还没有成绩，来当第一人！</td></tr>';
+    document.getElementById('lbRefresh').textContent = 'LIVE';
+    // mini榜(游戏中显示TOP5)
+    document.getElementById('lbMiniRows').innerHTML = (data||[]).slice(0,5).map((r,i) =>
+      `<div class="row"><span class="n">${i+1}. ${escapeHtml(r.player_name)}</span><span class="s">${Number(r.score).toLocaleString()}</span></div>`
+    ).join('');
+  } catch(e) { document.getElementById('lbRefresh').textContent = '离线'; }
+}
+/* ---- M2.2: 多人同屏 ---- */
+let myRoom = null, myPlayerRowId = null, myColor = 0xd23b2e, remoteCars = {};  // id -> {mesh, target:{x,z,heading}, name}
+let heartbeatTimer = null;
+
+function makeRemoteCar(colorHex, name) {
+  const g = new THREE.Group();
+  const bodyMat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: .4, metalness: .35 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1.9, .55, 4.4), bodyMat);
+  body.position.y = .55; body.castShadow = true; g.add(body);
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.6, .5, 2.0),
+    new THREE.MeshStandardMaterial({ color: 0x1a1d24, roughness: .2, metalness: .6 }));
+  cabin.position.set(0, 1.05, -.2); cabin.castShadow = true; g.add(cabin);
+  const wheelGeo = new THREE.CylinderGeometry(.42, .42, .34, 12);
+  const wheelMat = new THREE.MeshStandardMaterial({ color: 0x14161c });
+  [[-.85,1.45],[.85,1.45],[-.85,-1.45],[.85,-1.45]].forEach(([x,z]) => {
+    const w = new THREE.Mesh(wheelGeo, wheelMat); w.rotation.z = Math.PI/2;
+    w.position.set(x, .42, z); g.add(w);
+  });
+  // 头顶名牌
+  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 64;
+  const cx = cv.getContext('2d');
+  cx.fillStyle = 'rgba(10,14,20,.65)'; cx.beginPath(); cx.roundRect(8,8,240,48,10); cx.fill();
+  cx.fillStyle = '#fff'; cx.font = '700 28px -apple-system'; cx.textAlign = 'center';
+  cx.fillText(name.slice(0,8), 128, 42);
+  const tex = new THREE.CanvasTexture(cv);
+  const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
+  tag.scale.set(2.6, .65, 1); tag.position.y = 2.1; g.add(tag);
+  return g;
+}
+
+async function joinRoom(code, isCreate) {
+  if (myRoom) { document.getElementById('roomStatus').textContent = `已在房间 ${myRoom}, 刷新页面可换房`; return; }
+  const name = myName || '无名车手';
+  try {
+    if (isCreate) {
+      const { error } = await sb.from('rooms').upsert({ id: code, host_name: name, max_players: 5 });
+      if (error) throw error;
+    } else {
+      const { data, error } = await sb.from('rooms').select('id').eq('id', code);
+      if (error) throw error;
+      if (!data.length) { document.getElementById('roomStatus').textContent = '房间不存在, 检查房号或直接创建'; return; }
+    }
+    const { data, error } = await sb.from('room_players')
+      .insert({ room_id: code, player_name: name, car_state: { x:0, z:0, heading:0, speed:0 } })
+      .select('id');
+    if (error) throw error;
+    myRoom = code; myPlayerRowId = data[0].id;
+    document.getElementById('roomStatus').textContent = `房间 ${code} 已就位 — 把房号发给朋友, 最多5人`;
+    // 生成自己的颜色
+    let h = 0; for (const c of code + name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+    myColor = new THREE.Color().setHSL((h % 360) / 360, .75, .55).getHex();
+    if (window.__bodyMat) window.__bodyMat.color.setHex(myColor); else if (car.bodyMat) car.bodyMat.color.setHex(myColor);
+    // 订阅房间玩家变化
+    sb.channel(`room-${code}-${Date.now()}`)
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${code}` },
+        payload => {
+          const row = payload.new;
+          if (!row || row.id === myPlayerRowId) return;
+          if (payload.eventType === 'DELETE') { removeRemoteCar(row.id); return; }
+          upsertRemoteCar(row.id, row.player_name, row.car_state);
+        })
+      .subscribe();
+    // 10Hz心跳 + 3s清理自己旧记录(重连幂等)
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    heartbeatTimer = setInterval(pushCarState, 100);
+    setInterval(async () => {  // 60s保活: 让UPDATE持续发生也更新last_seen
+      if (myRoom) await sb.from('room_players').update({ last_seen: new Date().toISOString() }).eq('id', myPlayerRowId);
+    }, 30000);
+  } catch(e) {
+    document.getElementById('roomStatus').textContent = '加入失败: ' + e.message;
+  }
+}
+
+function upsertRemoteCar(id, name, st) {
+  if (!remoteCars[id]) {
+    let h = 0; for (const c of (myRoom||'') + name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+    const color = new THREE.Color().setHSL((h % 360) / 360, .75, .55).getHex();
+    const mesh = makeRemoteCar(color, name);
+    mesh.position.set(st.x ?? 0, 0, st.z ?? 0);
+    scene.add(mesh);
+    remoteCars[id] = { mesh, target: { ...st }, name };
+  } else {
+    remoteCars[id].target = { ...st };
+  }
+  remoteCars[id].buff = { boost: st.boost || 0, shield: st.shield || 0 };
+}
+
+// 远程车buff视觉: 蓝色护盾罩 + 橙色加速尾焰
+function tickRemoteBuff(dt) {
+  const t = nowSec();
+  for (const id in remoteCars) {
+    const rc = remoteCars[id], b = rc.buff || {};
+    // 护盾罩
+    const hasShield = b.shield > 0;
+    if (hasShield && !rc.shieldMesh) {
+      rc.shieldMesh = new THREE.Mesh(new THREE.SphereGeometry(2.4, 14, 10),
+        new THREE.MeshBasicMaterial({ color: 0x3fa8ff, transparent: true, opacity: .2 }));
+      rc.mesh.add(rc.shieldMesh);
+      rc.shieldMesh.position.y = 0.9;
+    }
+    if (rc.shieldMesh) rc.shieldMesh.visible = hasShield;
+    // 加速尾焰: 车后方橙色光点(简单sprite)
+    const hasBoost = b.boost > 0;
+    if (hasBoost && !rc.boostMesh) {
+      rc.boostMesh = new THREE.Mesh(new THREE.ConeGeometry(0.35, 1.6, 8),
+        new THREE.MeshBasicMaterial({ color: 0xff8822, transparent: true, opacity: .75 }));
+      rc.boostMesh.rotation.x = -Math.PI/2;
+      rc.mesh.add(rc.boostMesh);
+      rc.boostMesh.position.set(0, 0.55, -2.6);
+    }
+    if (rc.boostMesh) {
+      rc.boostMesh.visible = hasBoost;
+      if (hasBoost) rc.boostMesh.scale.y = 0.8 + Math.sin(t*30) * 0.35;  // 抖动火焰
+    }
+  }
+}
+function removeRemoteCar(id) {
+  if (remoteCars[id]) { scene.remove(remoteCars[id].mesh); delete remoteCars[id]; }
+}
+
+function pushCarState() {
+  if (!myRoom) return;
+  const tNow = nowSec();
+  sb.from('room_players').update({
+    car_state: { x: +state.pos.x.toFixed(1), z: +state.pos.z.toFixed(1),
+                 heading: +state.heading.toFixed(2), speed: +(state.speedMps*3.6).toFixed(0), drift: +(state.driftAmount).toFixed(2),
+                 boost: Math.max(0, +(boostUntil - tNow).toFixed(1)), shield: Math.max(0, +(shieldUntil - tNow).toFixed(1)) },
+    last_seen: new Date().toISOString()
+  }).eq('id', myPlayerRowId).then();
+}
+
+
+/* ---- M2.4: 圈速 ---- */
+const lap = { count: 0, startedAt: 0, lastLap: 0, best: Number(localStorage.getItem('drift_best')||0), armed: false };
+function updateLap() {
+  if (!playing) { lap.armed = false; return; }
+  const z = state.pos.z, x = state.pos.x;
+  const t = nowSec();
+  // 必须先跑到线前方(z>110)解锁, 且两圈最少隔15s(防瞬移/来回蹭线刷圈)
+  if (z > 110) lap.armed = true;
+  if (Math.abs(x) < 14 && lap.armed && z <= 88 && z > 80 && state.speedMps > 8 && t - lap.startedAt > 15) {
+    if (lap.startedAt) {
+      lap.lastLap = t - lap.startedAt;
+      if (!lap.best || lap.lastLap < lap.best) {
+        lap.best = lap.lastLap;
+        localStorage.setItem('drift_best', String(lap.best));
+      }
+    }
+    lap.startedAt = t; lap.count++; lap.armed = false;
+  }
+}
+
+// ---- 车对车碰撞 (圆形近似, 半径1.7m) ----
+function resolveCollisions() {
+  if (!playing) return;
+  for (const id in remoteCars) {
+    const rc = remoteCars[id];
+    const dx = rc.mesh.position.x - state.pos.x;
+    const dz = rc.mesh.position.z - state.pos.z;
+    const dist = Math.hypot(dx, dz);
+    const MIN = 3.2;  // 两车半径和
+    if (dist > 0.001 && dist < MIN) {
+      const push = (MIN - dist) / 2;
+      const nx = dx / dist, nz = dz / dist;
+      // 各退一半
+      state.pos.x -= nx * push; state.pos.z -= nz * push;
+      rc.mesh.position.x += nx * push; rc.mesh.position.z += nz * push;
+      // 对方目标位置也同步推(下个心跳它自己会修正)
+      rc.target.x += nx * push; rc.target.z += nz * push;
+      // 速度衰减30% + 轻微弹开 (护盾期间免伤)
+      if (nowSec() >= shieldUntil) {
+        state.speedMps *= 0.7;
+        state.lateralSpeed -= nx * 2.5;
+      }
+      // 碰撞火花: 复用烟雾粒子池变白
+      for (let i = 0; i < 6; i++) {
+        const sp = state.pos.clone().add(new THREE.Vector3(nx*1.4, 0.4, nz*1.4));
+        emitSmoke(sp, 0.9);
+      }
+    }
+  }
+}
+
+function tickRemoteCars(dt) {
+  const k = 1 - Math.pow(0.001, dt);  // 平滑插值
+  for (const id in remoteCars) {
+    const rc = remoteCars[id], t = rc.target;
+    rc.mesh.position.x += (t.x - rc.mesh.position.x) * k;
+    rc.mesh.position.z += (t.z - rc.mesh.position.z) * k;
+    if (t.heading != null) rc.mesh.rotation.y += (t.heading - rc.mesh.rotation.y) * k;
+  }
+}
+
+document.getElementById('btnCreateRoom').onclick = () => {
+  const code = Math.random().toString(36).slice(2, 8).toUpperCase();
+  document.getElementById('roomCode').value = code;
+  joinRoom(code, true);
+};
+document.getElementById('btnJoinRoom').onclick = () => {
+  const code = document.getElementById('roomCode').value.trim().toUpperCase();
+  if (code.length === 6) joinRoom(code, false);
+};
+
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// 游戏开始(关大厅)
+document.getElementById('btnStart').onclick = () => {
+  const name = document.getElementById('playerName').value.trim();
+  if (name) { myName = name; localStorage.setItem('drift_name', name); }
+  document.getElementById('lobby').style.display = 'none';
+  document.getElementById('lbMini').style.display = 'block';
+  playing = true;
+};
+// Esc 结束→上传
+addEventListener('keydown', e => {
+  if (e.code === 'Escape' && playing && !document.getElementById('submitBox').style.display.includes('block')) {
+    playing = false;
+    document.getElementById('finalScore').textContent = Math.floor(state.driftScore).toLocaleString();
+    document.getElementById('submitName').value = myName;
+    document.getElementById('submitBox').style.display = 'block';
+  }
+});
+document.getElementById('btnSubmit').onclick = async () => {
+  const name = document.getElementById('submitName').value.trim() || '无名车手';
+  myName = name; localStorage.setItem('drift_name', name);
+  try {
+    await sb.from('scores').insert({ player_name: name, score: Math.floor(state.driftScore), best_drift: 0 });
+    document.getElementById('submitBox').style.display = 'none';
+    document.getElementById('lobby').style.display = 'flex';
+    loadLeaderboard();
+    resetCar();
+  } catch(e) { alert('上传失败: ' + e.message); }
+};
+
+let playing = false;
+
+/* ============================================================
+   暴力漂移赛车 M1 — 单机漂移Demo
+   物理参数移植自 nordschleife-racer (12.7k★ 参考实现)
+   driftTarget = speedNorm × steerNorm × inputNorm(手刹∩油门) × capability
+   ============================================================ */
+
+// ---- 物理常量 (nordschleife-racer 实测值) ----
+const ENTRY_SPEED = 7.5;        // 起漂速度 m/s
+const FULL_SPEED  = 23;         // 满漂移速度
+const RELEASE_SPEED = 4.5;      // 低于此速快速退出漂移
+const MAX_STEER_DEG = 34;
+const STEER_SENS = 0.132 * 12;  // steerLerp系数
+const TOP_SPEED_KPH = 300;
+const ZERO_TO_100 = 3.55;
+const BRAKE_DECEL = 42;
+const AERO_DRAG = 0.00014;
+const ROLL_RESIST = 0.34;
+const DRIFT_CAPABILITY = 1.0;   // M1单车上限100%
+
+// ---- 场景 ----
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87b5e0);
+scene.fog = new THREE.Fog(0x87b5e0, 180, 620);
+
+const camera = new THREE.PerspectiveCamera(66, innerWidth/innerHeight, 0.1, 1200);
+
+const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+sun.position.set(120, 180, 60);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -160; sun.shadow.camera.right = 160;
+sun.shadow.camera.top = 160; sun.shadow.camera.bottom = -160;
+sun.shadow.camera.far = 500;
+scene.add(sun);
+scene.add(new THREE.HemisphereLight(0xbfd9ff, 0x4a5a3a, 0.9));
+
+// ---- 赛道: 环形漂移场 (大平地 + 环形柏油路 + 中央技巧区) ----
+const GROUND = 700;
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(GROUND, GROUND),
+  new THREE.MeshLambertMaterial({ color:0x5a7a42 })
+);
+ground.rotation.x = -Math.PI/2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// 环形赛道 (RingGeometry, 内R=70 外R=110)
+const trackRing = new THREE.Mesh(
+  new THREE.RingGeometry(70, 110, 128),
+  new THREE.MeshLambertMaterial({ color:0x3a3d42 })
+);
+trackRing.rotation.x = -Math.PI/2;
+trackRing.position.y = 0.02;
+trackRing.receiveShadow = true;
+scene.add(trackRing);
+
+// 赛道边线 (红白路缘石感)
+for (const [rIn, rOut, col] of [[68.4,70,0xd94f3d],[110,111.6,0xd94f3d]]) {
+  const kerb = new THREE.Mesh(
+    new THREE.RingGeometry(rIn, rOut, 128),
+    new THREE.MeshBasicMaterial({ color:col })
+  );
+  kerb.rotation.x = -Math.PI/2; kerb.position.y = 0.03;
+  scene.add(kerb);
+}
+
+// 中央技巧场 (漂移练习区, 深色柏油 + 甩尾圆标)
+const pad = new THREE.Mesh(
+  new THREE.CircleGeometry(46, 64),
+  new THREE.MeshLambertMaterial({ color:0x35383e })
+);
+pad.rotation.x = -Math.PI/2; pad.position.y = 0.02; pad.receiveShadow = true;
+scene.add(pad);
+const donut = new THREE.Mesh(
+  new THREE.RingGeometry(9, 10.4, 64),
+  new THREE.MeshBasicMaterial({ color:0xe8b93d })
+);
+donut.rotation.x = -Math.PI/2; donut.position.y = 0.03;
+scene.add(donut);
+
+// 装饰树 (低多边形, 随机撒在外场)
+const treeGeoC = new THREE.ConeGeometry(2.4, 7, 7);
+const treeGeoT = new THREE.CylinderGeometry(0.4, 0.5, 2.2, 6);
+const treeMatC = new THREE.MeshLambertMaterial({ color:0x2e5c2a });
+const treeMatT = new THREE.MeshLambertMaterial({ color:0x5c4428 });
+for (let i=0;i<60;i++) {
+  const ang = Math.random()*Math.PI*2;
+  const dist = 130 + Math.random()*190;
+  const g = new THREE.Group();
+  const c = new THREE.Mesh(treeGeoC, treeMatC); c.position.y = 5.2; c.castShadow = true;
+  const t = new THREE.Mesh(treeGeoT, treeMatT); t.position.y = 1.1;
+  g.add(c,t);
+  g.position.set(Math.cos(ang)*dist, 0, Math.sin(ang)*dist);
+  const s = 0.7 + Math.random()*0.9; g.scale.setScalar(s);
+  scene.add(g);
+}
+
+// ---- 车辆 (M1: 程序化拼装车 — M3照片车模管线在此替换) ----
+function buildCar() {
+  const g = new THREE.Group();
+  const bodyMat = new THREE.MeshStandardMaterial({ color:0xd23b2e, metalness:0.55, roughness:0.35 });
+  // 车身: 主体舱 + 座舱盖
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.52, 4.4), bodyMat);
+  body.position.y = 0.55; body.castShadow = true; g.add(body);
+  const cabin = new THREE.Mesh(
+    new THREE.BoxGeometry(1.62, 0.44, 2.0),
+    new THREE.MeshStandardMaterial({ color:0x181c22, metalness:0.3, roughness:0.15 })
+  );
+  cabin.position.set(0, 0.98, -0.25); cabin.castShadow = true; g.add(cabin);
+  // 前铲/尾翼 (暴力感)
+  const splitter = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.1, 0.5), bodyMat);
+  splitter.position.set(0, 0.3, 2.25); g.add(splitter);
+  const wing = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.08, 0.45), bodyMat);
+  wing.position.set(0, 1.18, -2.05); g.add(wing);
+  const wingPost = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.34, 0.1), bodyMat);
+  wingPost.position.set(0, 0.98, -2.05); g.add(wingPost);
+  // 车灯
+  const lampMat = new THREE.MeshBasicMaterial({ color:0xfff2b8 });
+  for (const sx of [-0.62, 0.62]) {
+    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.14, 0.06), lampMat);
+    lamp.position.set(sx, 0.62, 2.21); g.add(lamp);
+  }
+  // 四轮 (存引用做滚动+转向)
+  const wheelGeo = new THREE.CylinderGeometry(0.38, 0.38, 0.32, 18);
+  wheelGeo.rotateZ(Math.PI/2);
+  const tyreMat = new THREE.MeshStandardMaterial({ color:0x14161a, roughness:0.9 });
+  const rimGeo = new THREE.CylinderGeometry(0.2, 0.2, 0.34, 10);
+  rimGeo.rotateZ(Math.PI/2);
+  const rimMat = new THREE.MeshStandardMaterial({ color:0xc8ccd4, metalness:0.9, roughness:0.25 });
+  const wheels = [];
+  for (const [wx, wz, front] of [[-0.92, 1.42, true],[0.92, 1.42, true],[-0.92, -1.42, false],[0.92, -1.42, false]]) {
+    const w = new THREE.Group();
+    const tyre = new THREE.Mesh(wheelGeo, tyreMat); tyre.castShadow = true;
+    const rim = new THREE.Mesh(rimGeo, rimMat);
+    w.add(tyre, rim);
+    w.position.set(wx, 0.38, wz);
+    g.add(w);
+    wheels.push({ group:w, front });
+  }
+  return { group:g, wheels, bodyMat };
+}
+const car = buildCar();
+scene.add(car.group);
+// ---- M3: 照片级车模替换（加载成功后无缝替换程序化车）----
+  const draco = new DRACOLoader().setDecoderPath('./vendor/draco/');
+  new GLTFLoader().setDRACOLoader(draco).load('./vendor/ferrari.glb', (gltf) => {
+    const model = gltf.scene.children[0];
+    // 官方样例: body材质可换色, wheel节点可滚动
+    const wheels = [];
+    model.getObjectByName('wheel_fl') && ['wheel_fl','wheel_fr','wheel_rl','wheel_rr'].forEach(n => {
+      const w = model.getObjectByName(n); if (w) wheels.push({ group: w, front: n.includes('_f') });
+    });
+    // 尺寸适配: 包围盒→缩放到长4.4m
+    const box = new THREE.Box3().setFromObject(model);
+    const size = box.getSize(new THREE.Vector3());
+    const s = 4.4 / Math.max(size.z, size.x);
+    model.scale.setScalar(s);
+    const box2 = new THREE.Box3().setFromObject(model);
+    model.position.y -= box2.min.y;  // 轮子贴地
+    // 替换: 把模型塞进原group, 隐藏程序化车身件(保留灯光辅助)
+    car.group.add(model);
+    car.group.traverse(o => { if (o.isMesh && o.geometry?.type === 'BoxGeometry') o.visible = false; });
+    car.bodyMat = null;  // 程序化换色失效, 用模型自带红
+    car.wheels = wheels.length === 4 ? wheels : car.wheels;  // 轮子滚动映射到模型轮
+    car.photo = true;
+    // 金属车漆质感: PMREM环境反射(全局scene.environment + 材质增强)
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environment = envTex;  // 全局PBR反射
+    const body = model.getObjectByName('body');
+    if (body && body.material) {
+      const old2 = body.material;
+      body.material = new THREE.MeshPhysicalMaterial({
+        color: 0xff0000, metalness: 0.9, roughness: 0.18,
+        clearcoat: 1.0, clearcoatRoughness: 0.06, envMapIntensity: 1.6
+      });
+      old2.dispose && old2.dispose();
+      window.__bodyMat = body.material;  // 多人换色走这里
+    }
+    model.traverse(o => {
+      if (o.isMesh && o.material && o.material.isMeshStandardMaterial && o.name !== 'body') {
+        o.material.envMapIntensity = 1.2;
+        o.material.needsUpdate = true;
+      }
+    });
+    pmrem.dispose();
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.25;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    window.__photoCarLoaded = true;
+  }, undefined, (e) => { console.warn('photo car load failed, keep procedural', e); });
+scene.add(car.group);
+
+// ---- 漂移烟雾 (参考DriftSmoke: 粒子sprite池) ----
+const smokeTex = (() => {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+  const cx = cv.getContext('2d');
+  const gr = cx.createRadialGradient(32,32,2, 32,32,28);
+  gr.addColorStop(0,'rgba(255,255,255,0.8)');
+  gr.addColorStop(0.45,'rgba(210,210,210,0.45)');
+  gr.addColorStop(1,'rgba(150,150,150,0)');
+  cx.fillStyle = gr; cx.fillRect(0,0,64,64);
+  return new THREE.CanvasTexture(cv);
+})();
+const smokePool = [];
+const SMOKE_MAX = 96;
+function emitSmoke(pos, intensity) {
+  if (smokePool.length >= SMOKE_MAX) {
+    const old = smokePool.shift();
+    scene.remove(old.sprite); old.sprite.material.dispose();
+  }
+  const m = new THREE.SpriteMaterial({
+    map:smokeTex, transparent:true,
+    opacity:THREE.MathUtils.lerp(0.2, 0.55, intensity),
+    depthWrite:false, color:0xbec3c8
+  });
+  const s = new THREE.Sprite(m);
+  const sc = THREE.MathUtils.lerp(0.6, 1.4, intensity);
+  s.scale.setScalar(sc);
+  s.position.copy(pos);
+  scene.add(s);
+  smokePool.push({ sprite:s, age:0, life:0.8+Math.random()*0.7,
+                   vel:new THREE.Vector3((Math.random()-0.5)*1.4, 1.1+Math.random()*1.2, (Math.random()-0.5)*1.4),
+                   grow:2.2+Math.random()*1.6 });
+}
+function updateSmoke(dt) {
+  for (let i=smokePool.length-1; i>=0; i--) {
+    const p = smokePool[i];
+    p.age += dt;
+    if (p.age >= p.life) { scene.remove(p.sprite); p.sprite.material.dispose(); smokePool.splice(i,1); continue; }
+    p.sprite.position.addScaledVector(p.vel, dt);
+    p.sprite.scale.addScalar(p.grow*dt);
+    p.sprite.material.opacity = (1 - p.age/p.life) * 0.55;
+  }
+}
+
+
+/* ---- M2.3: 道具系统 ---- */
+const powerups = [];
+let shieldMesh = null;  // {mesh, kind:'boost'|'shield', pos, active, respawnAt}
+const PU_SPOTS = [
+  {x:0, z:60, kind:'boost'}, {x:0, z:-60, kind:'boost'},
+  {x:60, z:0, kind:'boost'}, {x:-60, z:0, kind:'boost'},
+  {x:42, z:42, kind:'shield'}, {x:-42, z:42, kind:'shield'},
+  {x:42, z:-42, kind:'shield'}, {x:-42, z:-42, kind:'shield'},
+];
+function buildPowerupMesh(kind) {
+  if (kind === 'boost') {
+    // 加速带: 绿色发光双箭头环
+    const g = new THREE.Group();
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(1.6, .18, 8, 24),
+      new THREE.MeshStandardMaterial({ color: 0x2eff6a, emissive: 0x1ab548, emissiveIntensity: 1.2 }));
+    ring.rotation.x = Math.PI/2; ring.position.y = .3; g.add(ring);
+    return g;
+  }
+  // 护盾: 蓝色发光球
+  const g = new THREE.Group();
+  const ball = new THREE.Mesh(new THREE.IcosahedronGeometry(1.1, 1),
+    new THREE.MeshStandardMaterial({ color: 0x3fa8ff, emissive: 0x1a6bd2, emissiveIntensity: 1.1,
+                                     transparent: true, opacity: .85 }));
+  ball.position.y = 1.0; g.add(ball);
+  return g;
+}
+function initPowerups() {
+  for (const s of PU_SPOTS) {
+    const mesh = buildPowerupMesh(s.kind);
+    mesh.position.set(s.x, 0, s.z);
+    scene.add(mesh);
+    powerups.push({ mesh, kind: s.kind, x: s.x, z: s.z, active: true, respawnAt: 0 });
+  }
+}
+let boostUntil = 0, shieldUntil = 0;  // 效果到期时间(游戏秒)
+let nowSec = () => performance.now()/1000;
+function updatePowerups(dt) {
+  const t = nowSec();
+  for (const pu of powerups) {
+    if (!pu.active) {
+      if (t >= pu.respawnAt) { pu.active = true; pu.mesh.visible = true; }
+      continue;
+    }
+    pu.mesh.rotation.y += dt * 2.2;
+    // 拾取判定(半径2.2)
+    if (playing && Math.hypot(state.pos.x - pu.x, state.pos.z - pu.z) < 2.2) {
+      pu.active = false; pu.mesh.visible = false; pu.respawnAt = t + 15;
+      if (pu.kind === 'boost') { boostUntil = t + 2.0; }
+      else { shieldUntil = t + 8.0; }
+      // 拾取特效: 一圈粒子
+      for (let i = 0; i < 8; i++) emitSmoke(state.pos.clone().add(new THREE.Vector3(0, .6, 0)), 1.0);
+    }
+  }
+  // 护盾视觉: 本机车外圈蓝光球
+  if (t < shieldUntil) {
+    if (!shieldMesh) {
+      shieldMesh = new THREE.Mesh(new THREE.SphereGeometry(2.6, 18, 14),
+        new THREE.MeshBasicMaterial({ color: 0x3fa8ff, transparent: true, opacity: .18 }));
+      scene.add(shieldMesh);
+    }
+    shieldMesh.visible = true;
+    shieldMesh.position.copy(state.pos).y = 1.1;
+  } else if (shieldMesh) shieldMesh.visible = false;
+}
+initPowerups();
+
+// ---- 输入 ----
+const keys = {};
+// 测试注入层: window.__forceKeys 与真实键盘合并(CDP自动化/E2E用)
+function keyState(code) {
+  return (keys[code] || (window.__forceKeys && window.__forceKeys[code])) ? 1 : 0;
+}
+addEventListener('keydown', e => { keys[e.code] = true; if (e.code==='Space') e.preventDefault(); });
+addEventListener('keyup',   e => keys[e.code] = false);
+
+// ---- 车辆状态 ----
+const state = {
+  pos: new THREE.Vector3(0, 0, 90),      // 起始在环形赛道上
+  heading: Math.PI,                       // 朝切线方向
+  speedMps: 0,
+  lateralSpeed: 0,
+  steerAngle: 0,
+  driftAmount: 0,
+  driftScore: 0,
+  combo: 1,
+  comboTimer: 0,
+  smokeTimer: 0,
+};
+const WHEELBASE = 2.84;  // 车参考 4.4*0.62≈2.7, 取2.84
+
+function resetCar() {
+  state.pos.set(0, 0, 90); state.heading = Math.PI;
+  state.speedMps = 0; state.lateralSpeed = 0; state.driftAmount = 0;
+  state.combo = 1; state.comboTimer = 0;
+}
+
+// ---- 主循环 ----
+const clock = new THREE.Clock();
+const _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _tmp = new THREE.Vector3();
+let hudTimer = 0;
+
+function tick() {
+  requestAnimationFrame(tick);
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  // --- 输入归一 ---
+  const throttle = keyState('KeyW') ? 1 : 0;
+  const braking  = keyState('KeyS') ? 1 : 0;
+  const steer    = (keyState('KeyA') ? 1 : 0) - (keyState('KeyD') ? 1 : 0); // A=左=+
+  const handbrake = keyState('Space') ? 1 : 0;
+
+  // --- 转向 (低速助力, 参考实现) ---
+  const speedAbs = Math.abs(state.speedMps);
+  const steerScale = 0.132;
+  const lowBoost = THREE.MathUtils.lerp(2.05, 1, THREE.MathUtils.clamp(speedAbs/24, 0, 1));
+  const targetSteer = steer * MAX_STEER_DEG * Math.PI/180 * steerScale * lowBoost * 10;
+  const steerLerp = THREE.MathUtils.clamp(dt * STEER_SENS * 1.9, 0, 1);
+  state.steerAngle = THREE.MathUtils.lerp(state.steerAngle, targetSteer, steerLerp);
+
+  // --- 纵向动力 ---
+  if (speedAbs < 0.2) {
+    state.lateralSpeed = THREE.MathUtils.lerp(state.lateralSpeed, 0, steerLerp);
+    state.driftAmount = Math.max(0, state.driftAmount - dt*4);
+  } else {
+    // 漂移量: speed × steer × (手刹∩油门) × capability
+    const driftSpeedNorm = THREE.MathUtils.clamp((speedAbs - ENTRY_SPEED) / (FULL_SPEED - ENTRY_SPEED), 0, 1);
+    const driftSteerNorm = THREE.MathUtils.clamp((Math.abs(steer) - 0.12) / 0.88, 0, 1);
+    const hbNorm = THREE.MathUtils.clamp((handbrake - 0.18) / 0.82, 0, 1);
+    const thNorm = THREE.MathUtils.clamp((throttle - 0.15) / 0.85, 0, 1);
+    const inputNorm = Math.min(hbNorm, thNorm);
+    // M1简化: 无手刹时大转向+油门也可滑(娱乐化"暴力漂移"), 手刹放大
+    const driftTarget = driftSpeedNorm * driftSteerNorm
+      * (inputNorm > 0 ? 1 : 0.45 * thNorm) * DRIFT_CAPABILITY * (handbrake>0 ? 1.15 : 1);
+    const buildRate = THREE.MathUtils.lerp(1.4, 3.1, driftTarget) * 1;
+    const releaseRate = speedAbs > RELEASE_SPEED ? THREE.MathUtils.lerp(2.4,4.2,1-driftTarget) : THREE.MathUtils.lerp(4.2,6,1-driftTarget);
+    const rate = driftTarget >= state.driftAmount ? buildRate : releaseRate;
+    state.driftAmount = THREE.MathUtils.lerp(state.driftAmount, driftTarget, THREE.MathUtils.clamp(dt*rate, 0, 1));
+
+    // 侧滑 + 横摆
+    const driftPower = 1.0;
+    const slipTarget = -steer * speedAbs * (0.3 + state.driftAmount*1.05) * driftPower;
+    const slipLerp = THREE.MathUtils.clamp(dt * (2.2 + state.driftAmount*2.4), 0, 1);
+    // M1无碰撞约束, 侧滑封顶±22m/s防飞出
+    state.lateralSpeed = THREE.MathUtils.clamp(
+      THREE.MathUtils.lerp(state.lateralSpeed, slipTarget, slipLerp), -22, 22);
+  }
+
+  // 加速/刹车/阻力
+  let accel = 0;
+  if (throttle) {
+    const powerCurve = 1 - THREE.MathUtils.clamp(speedAbs/(TOP_SPEED_KPH/3.6), 0, 1) * 0.75;
+    accel += (100/ZERO_TO_100/3.6) * 2.4 * powerCurve * (nowSec() < boostUntil ? 1.4 : 1);
+  }
+  if (braking) accel -= state.speedMps > 0.5 ? BRAKE_DECEL*0.55 : (accel = -8, -8);
+  if (handbrake) accel -= Math.sign(state.speedMps) * 10 * (state.driftAmount>0.3 ? 0.3 : 1);
+  accel -= state.speedMps * ROLL_RESIST * 0.55 * dt * 10 / Math.max(speedAbs,1) * Math.min(speedAbs,1);
+  accel -= AERO_DRAG * state.speedMps * speedAbs * 100;
+  if (!throttle && !braking && Math.abs(state.speedMps) < 0.3) state.speedMps = 0;
+  state.speedMps = THREE.MathUtils.clamp(state.speedMps + accel*dt, -9.5, TOP_SPEED_KPH/3.6);
+
+  // --- 运动积分 ---
+  const yawRate = (state.speedMps / WHEELBASE) * Math.tan(state.steerAngle)
+                + (state.driftAmount > 0.001 ? steer * (0.35 + state.driftAmount*1.15) * driftPower * Math.min(speedAbs/10,1) : 0);
+  state.heading += yawRate * dt;
+
+  _fwd.set(Math.sin(state.heading), 0, Math.cos(state.heading));
+  _right.set(_fwd.z, 0, -_fwd.x); // 右手侧
+  _tmp.copy(_fwd).multiplyScalar(state.speedMps * dt)
+      .addScaledVector(_right, state.lateralSpeed * dt);
+  state.pos.add(_tmp);
+
+  // 边界约束 (场地700x700, 留50余量弹回)
+  const LIM = 320;
+  if (Math.abs(state.pos.x) > LIM || Math.abs(state.pos.z) > LIM) {
+    state.pos.x = THREE.MathUtils.clamp(state.pos.x, -LIM, LIM);
+    state.pos.z = THREE.MathUtils.clamp(state.pos.z, -LIM, LIM);
+    state.speedMps *= 0.4;
+  }
+
+  // --- 漂移计分 ---
+  const isDrifting = Math.min(state.driftAmount, 1.15) > 0.25 && speedAbs > 6;
+  if (isDrifting) {
+    const gain = state.driftAmount * speedAbs * dt * 12;
+    state.driftScore += gain * state.combo;
+    state.comboTimer = 1.6;
+    state.combo = Math.min(5, state.combo + dt * 0.35);
+  } else if (state.comboTimer > 0) {
+    state.comboTimer -= dt;
+    if (state.comboTimer <= 0) state.combo = 1;
+  }
+
+  // --- 烟雾发射 (后轮) ---
+  state.smokeTimer -= dt;
+  if (state.driftAmount > 0.15 && speedAbs > 5 && state.smokeTimer <= 0) {
+    state.smokeTimer = 0.03;
+    const intensity = state.driftAmount;
+    for (const sx of [-0.92, 0.92]) {
+      _tmp.copy(_right).multiplyScalar(sx).add(state.pos).addScaledVector(_fwd, -1.42);
+      _tmp.y = 0.25;
+      emitSmoke(_tmp, intensity);
+    }
+  }
+  updateSmoke(dt);
+
+  // --- 车体姿态 ---
+  car.group.position.copy(state.pos);
+  car.group.rotation.y = state.heading;
+  // 漂移时车身视觉侧滑角(参考: slipAngle×0.42混合)
+  if (state.driftAmount > 0.04 && speedAbs > 3) {
+    const slipVis = THREE.MathUtils.clamp(state.lateralSpeed * 0.06, -1.19, 1.19);
+    car.group.rotation.y += slipVis * state.driftAmount * 0.42;
+  }
+  // 车轮: 前轮转向 + 全轮滚动
+  for (const w of car.wheels) {
+    if (w.front) w.group.rotation.y = state.steerAngle * 1.45;
+    w.group.children.forEach(m => m.rotation.x += state.speedMps * dt / 0.38);
+  }
+
+  // --- 追逐相机 (平滑跟随) ---
+  const camDist = 9 + speedAbs * 0.14;
+  _tmp.copy(state.pos).addScaledVector(_fwd, -camDist); _tmp.y = 4.2 + speedAbs*0.05;
+  camera.position.lerp(_tmp, 1 - Math.pow(0.0012, dt));
+  camera.lookAt(state.pos.x, 1.2, state.pos.z);
+
+  // --- HUD ---
+  window.__dbg = { spd: state.speedMps, drift: state.driftAmount, keys: {...keys} };
+  window.__test = { state, remoteCars, myRoom, powerups, lap, boostUntil, shieldUntil, nowSec };
+  hudTimer -= dt;
+  if (hudTimer <= 0) {
+    hudTimer = 0.08;
+    document.getElementById('spd').textContent = Math.round(Math.abs(state.speedMps)*3.6);
+    document.getElementById('drift').textContent = Math.min(100, Math.round(state.driftAmount*100))+'%';
+    document.getElementById('score').textContent = Math.floor(state.driftScore).toLocaleString();
+    document.getElementById('lapN').textContent = lap.count;
+    document.getElementById('lapBest').textContent = lap.best ? lap.best.toFixed(2)+'s' : '—';
+    const comboEl = document.getElementById('combo');
+    if (state.combo > 1.05) {
+      comboEl.style.opacity = 1;
+      document.getElementById('comboX').textContent = 'x'+state.combo.toFixed(1);
+    } else comboEl.style.opacity = 0;
+  }
+
+  tickRemoteCars(dt);
+  tickRemoteBuff(dt);
+  resolveCollisions();
+  updatePowerups(dt);
+  updateLap();
+  renderer.render(scene, camera);
+}
+tick();
+loadLeaderboard();
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+addEventListener('keydown', e => { if (e.code === 'KeyR') resetCar(); });
+</script>
+</body>
+</html>
