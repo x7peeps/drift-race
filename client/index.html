@@ -383,11 +383,10 @@ const ENTRY_SPEED = 7.5;        // 起漂速度 m/s
 const FULL_SPEED  = 23;         // 满漂移速度
 const RELEASE_SPEED = 4.5;      // 低于此速快速退出漂移
 const MAX_STEER_DEG = 34;
-const STEER_SENS = 0.132 * 12;  // steerLerp系数
 const TOP_SPEED_KPH = 300;
 const ZERO_TO_100 = 3.55;
 const BRAKE_DECEL = 42;
-const AERO_DRAG = 0.00014;
+const AERO_DRAG = 0.0011;
 const ROLL_RESIST = 0.34;
 const DRIFT_CAPABILITY = 1.0;   // M1单车上限100%
 
@@ -397,43 +396,124 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87b5e0);
-scene.fog = new THREE.Fog(0x87b5e0, 180, 620);
+scene.fog = new THREE.Fog(0x9fc4e8, 220, 900);
 
-const camera = new THREE.PerspectiveCamera(66, innerWidth/innerHeight, 0.1, 1200);
+const camera = new THREE.PerspectiveCamera(66, innerWidth/innerHeight, 0.1, 2000);
 
-const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+// 全局 PBR 环境反射: 启动即建(不等GLB), 金属车漆/轮毂立刻有真实反射
+const _pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = _pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+_pmrem.dispose();
+
+const sun = new THREE.DirectionalLight(0xfff4e0, 2.6);
 sun.position.set(120, 180, 60);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.camera.left = -160; sun.shadow.camera.right = 160;
-sun.shadow.camera.top = 160; sun.shadow.camera.bottom = -160;
-sun.shadow.camera.far = 500;
-scene.add(sun);
-scene.add(new THREE.HemisphereLight(0xbfd9ff, 0x4a5a3a, 0.9));
+// 阴影盒收紧跟随车辆(每帧更新), 2048贴图全部用在车周围→影子锐利无锯齿
+sun.shadow.camera.left = -45; sun.shadow.camera.right = 45;
+sun.shadow.camera.top = 45; sun.shadow.camera.bottom = -45;
+sun.shadow.camera.near = 10; sun.shadow.camera.far = 420;
+sun.shadow.bias = -0.0004;
+scene.add(sun, sun.target);
+scene.add(new THREE.HemisphereLight(0xbfd9ff, 0x51603e, 1.0));
+
+// ---- 渐变天空穹顶(替代纯色背景, 观感立刻上台阶) ----
+const skyTex = (() => {
+  const cv = document.createElement('canvas'); cv.width = 16; cv.height = 256;
+  const cx = cv.getContext('2d');
+  const gr = cx.createLinearGradient(0, 0, 0, 256);
+  gr.addColorStop(0.00, '#2f6cb3');   // 天顶深蓝
+  gr.addColorStop(0.45, '#7fb0dd');   // 中天
+  gr.addColorStop(0.78, '#cfe3ef');   // 地平线亮
+  gr.addColorStop(1.00, '#e8d9b8');   // 贴地暖色
+  cx.fillStyle = gr; cx.fillRect(0, 0, 16, 256);
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+})();
+const skyDome = new THREE.Mesh(
+  new THREE.SphereGeometry(950, 24, 16),
+  new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide, fog: false, depthWrite: false })
+);
+scene.add(skyDome);
+
+// ---- 远山剪影环(填补地平线, 增加纵深) ----
+{
+  const mtnMat = new THREE.MeshBasicMaterial({ color: 0x8aa4bd, fog: false });
+  for (let i = 0; i < 26; i++) {
+    const ang = (i / 26) * Math.PI * 2 + Math.random() * 0.14;
+    const dist = 560 + Math.random() * 160;
+    const h = 60 + Math.random() * 110;
+    const r = 90 + Math.random() * 130;
+    const m = new THREE.Mesh(new THREE.ConeGeometry(r, h, 5), mtnMat);
+    m.position.set(Math.cos(ang) * dist, h / 2 - 14, Math.sin(ang) * dist);
+    m.rotation.y = Math.random() * Math.PI;
+    scene.add(m);
+  }
+}
+
+// ---- 程序纹理工具 (草地/柏油噪声, 代替纯色大平面) ----
+function makeNoiseTexture(base, spots, size = 256, spotCount = 2600, spotSize = 2.4) {
+  const cv = document.createElement('canvas'); cv.width = cv.height = size;
+  const cx = cv.getContext('2d');
+  cx.fillStyle = base; cx.fillRect(0, 0, size, size);
+  for (let i = 0; i < spotCount; i++) {
+    cx.fillStyle = spots[(Math.random() * spots.length) | 0];
+    const a = Math.random() * Math.PI * 2, d = Math.random() * size / 2;
+    const s = spotSize * (0.4 + Math.random());
+    cx.globalAlpha = 0.25 + Math.random() * 0.5;
+    cx.beginPath();
+    cx.arc(size / 2 + Math.cos(a) * d, size / 2 + Math.sin(a) * d, s, 0, Math.PI * 2);
+    cx.fill();
+  }
+  cx.globalAlpha = 1;
+  const t = new THREE.CanvasTexture(cv);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return t;
+}
 
 // ---- 赛道: 环形漂移场 (大平地 + 环形柏油路 + 中央技巧区) ----
 const GROUND = 700;
+const grassTex = makeNoiseTexture('#5a7a42', ['#4c6c38', '#66884c', '#526e3e', '#6e9052'], 256, 3200, 2.6);
+grassTex.repeat.set(56, 56);
 const ground = new THREE.Mesh(
   new THREE.PlaneGeometry(GROUND, GROUND),
-  new THREE.MeshLambertMaterial({ color:0x5a7a42 })
+  new THREE.MeshLambertMaterial({ map: grassTex })
 );
 ground.rotation.x = -Math.PI/2;
 ground.receiveShadow = true;
 scene.add(ground);
 
+// 柏油纹理 (环形赛道与技巧场共用, 各自repeat)
+const asphaltTex = makeNoiseTexture('#3a3d42', ['#33363b', '#41444a', '#2f3237', '#46494f'], 256, 2400, 2.0);
+
 // 环形赛道 (RingGeometry, 内R=70 外R=110)
-const trackRing = new THREE.Mesh(
-  new THREE.RingGeometry(70, 110, 128),
-  new THREE.MeshLambertMaterial({ color:0x3a3d42 })
-);
-trackRing.rotation.x = -Math.PI/2;
-trackRing.position.y = 0.02;
-trackRing.receiveShadow = true;
-scene.add(trackRing);
+// ★ 极坐标UV重映射: 默认平面UV会把纹理拉成放射条纹, 改为 u=周向 v=径向 → 柏油均匀
+{
+  const geo = new THREE.RingGeometry(70, 110, 128, 1);
+  const pos = geo.attributes.position, uv = geo.attributes.uv;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i);
+    const r = Math.hypot(x, y), ang = Math.atan2(y, x);
+    uv.setXY(i, ang / (Math.PI * 2) * 90, (r - 70) / 40 * 4);
+  }
+  uv.needsUpdate = true;
+  const ringAsphalt = asphaltTex.clone(); ringAsphalt.needsUpdate = true; ringAsphalt.repeat.set(1, 1);
+  const trackRing = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: ringAsphalt }));
+  trackRing.rotation.x = -Math.PI/2;
+  trackRing.position.y = 0.02;
+  trackRing.receiveShadow = true;
+  scene.add(trackRing);
+}
 
 // 赛道边线 (红白路缘石感)
 for (const [rIn, rOut, col] of [[68.4,70,0xd94f3d],[110,111.6,0xd94f3d]]) {
@@ -446,9 +526,10 @@ for (const [rIn, rOut, col] of [[68.4,70,0xd94f3d],[110,111.6,0xd94f3d]]) {
 }
 
 // 中央技巧场 (漂移练习区, 深色柏油 + 甩尾圆标)
+const padAsphalt = asphaltTex.clone(); padAsphalt.needsUpdate = true; padAsphalt.repeat.set(14, 14);
 const pad = new THREE.Mesh(
   new THREE.CircleGeometry(46, 64),
-  new THREE.MeshLambertMaterial({ color:0x35383e })
+  new THREE.MeshLambertMaterial({ map: padAsphalt })
 );
 pad.rotation.x = -Math.PI/2; pad.position.y = 0.02; pad.receiveShadow = true;
 scene.add(pad);
@@ -459,16 +540,20 @@ const donut = new THREE.Mesh(
 donut.rotation.x = -Math.PI/2; donut.position.y = 0.03;
 scene.add(donut);
 
-// 装饰树 (低多边形, 随机撒在外场)
+// 装饰树 (低多边形, 随机撒在外场; 双色渐变增加层次)
 const treeGeoC = new THREE.ConeGeometry(2.4, 7, 7);
 const treeGeoT = new THREE.CylinderGeometry(0.4, 0.5, 2.2, 6);
-const treeMatC = new THREE.MeshLambertMaterial({ color:0x2e5c2a });
+const treeMatCs = [
+  new THREE.MeshLambertMaterial({ color: 0x2e5c2a }),
+  new THREE.MeshLambertMaterial({ color: 0x39702f }),
+  new THREE.MeshLambertMaterial({ color: 0x275224 }),
+];
 const treeMatT = new THREE.MeshLambertMaterial({ color:0x5c4428 });
 for (let i=0;i<60;i++) {
   const ang = Math.random()*Math.PI*2;
   const dist = 130 + Math.random()*190;
   const g = new THREE.Group();
-  const c = new THREE.Mesh(treeGeoC, treeMatC); c.position.y = 5.2; c.castShadow = true;
+  const c = new THREE.Mesh(treeGeoC, treeMatCs[(Math.random()*3)|0]); c.position.y = 5.2; c.castShadow = true;
   const t = new THREE.Mesh(treeGeoT, treeMatT); t.position.y = 1.1;
   g.add(c,t);
   g.position.set(Math.cos(ang)*dist, 0, Math.sin(ang)*dist);
@@ -479,13 +564,17 @@ for (let i=0;i<60;i++) {
 // ---- 车辆 (M1: 程序化拼装车 — M3照片车模管线在此替换) ----
 function buildCar() {
   const g = new THREE.Group();
-  const bodyMat = new THREE.MeshStandardMaterial({ color:0xd23b2e, metalness:0.55, roughness:0.35 });
+  // 车漆: clearcoat 物理材质 + 全局环境反射 = 真车漆质感
+  const bodyMat = new THREE.MeshPhysicalMaterial({
+    color: 0xd23b2e, metalness: 0.72, roughness: 0.28,
+    clearcoat: 1.0, clearcoatRoughness: 0.08, envMapIntensity: 1.5
+  });
   // 车身: 主体舱 + 座舱盖
   const body = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.52, 4.4), bodyMat);
   body.position.y = 0.55; body.castShadow = true; g.add(body);
   const cabin = new THREE.Mesh(
     new THREE.BoxGeometry(1.62, 0.44, 2.0),
-    new THREE.MeshStandardMaterial({ color:0x181c22, metalness:0.3, roughness:0.15 })
+    new THREE.MeshPhysicalMaterial({ color:0x0d1016, metalness:0.4, roughness:0.08, envMapIntensity:1.3 })
   );
   cabin.position.set(0, 0.98, -0.25); cabin.castShadow = true; g.add(cabin);
   // 前铲/尾翼 (暴力感)
@@ -495,12 +584,22 @@ function buildCar() {
   wing.position.set(0, 1.18, -2.05); g.add(wing);
   const wingPost = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.34, 0.1), bodyMat);
   wingPost.position.set(0, 0.98, -2.05); g.add(wingPost);
-  // 车灯
-  const lampMat = new THREE.MeshBasicMaterial({ color:0xfff2b8 });
+  // 前大灯: 自发光材质(不再受光照抑制) + PointLight 夜感光晕
+  const lampMat = new THREE.MeshBasicMaterial({ color: 0xfff6d8 });
+  const lampGlow = new THREE.PointLight(0xfff2c0, 2.2, 14, 2.0);
+  lampGlow.position.set(0, 0.65, 2.8);
+  g.add(lampGlow);
   for (const sx of [-0.62, 0.62]) {
     const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.14, 0.06), lampMat);
     lamp.position.set(sx, 0.62, 2.21); g.add(lamp);
   }
+  // 尾灯: 红色自发光 + 刹车变亮
+  const tailMat = new THREE.MeshBasicMaterial({ color: 0x7a1010 });
+  for (const sx of [-0.62, 0.62]) {
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.12, 0.06), tailMat);
+    tail.position.set(sx, 0.66, -2.21); g.add(tail);
+  }
+  g.userData.tailMat = tailMat;
   // 四轮 (存引用做滚动+转向)
   const wheelGeo = new THREE.CylinderGeometry(0.38, 0.38, 0.32, 18);
   wheelGeo.rotateZ(Math.PI/2);
@@ -523,53 +622,69 @@ function buildCar() {
 const car = buildCar();
 scene.add(car.group);
 // ---- M3: 照片级车模替换（加载成功后无缝替换程序化车）----
+{
   const draco = new DRACOLoader().setDecoderPath('./vendor/draco/');
   new GLTFLoader().setDRACOLoader(draco).load('./vendor/ferrari.glb', (gltf) => {
     const model = gltf.scene.children[0];
-    // 官方样例: body材质可换色, wheel节点可滚动
-    const wheels = [];
-    model.getObjectByName('wheel_fl') && ['wheel_fl','wheel_fr','wheel_rl','wheel_rr'].forEach(n => {
-      const w = model.getObjectByName(n); if (w) wheels.push({ group: w, front: n.includes('_f') });
-    });
-    // 尺寸适配: 包围盒→缩放到长4.4m
+    // ★ 车头朝向修正: 该GLB车头朝-Z(前轮z=-1.15/后轮z=+1.50), 物理车头=+Z → 整体旋转180°
+    model.rotation.y = Math.PI;
+    // 尺寸适配: 包围盒→缩放到长4.4m (旋转后先更新世界矩阵再量包围盒)
+    model.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(model);
     const size = box.getSize(new THREE.Vector3());
     const s = 4.4 / Math.max(size.z, size.x);
     model.scale.setScalar(s);
+    model.updateMatrixWorld(true);
     const box2 = new THREE.Box3().setFromObject(model);
     model.position.y -= box2.min.y;  // 轮子贴地
+    // ★ 轮子改造: 每个轮节点包一层pivot转向组(模型自带-90°X四元数保留不动),
+    //   转向只动pivot.rotation.y, 滚动用rotateOnAxis绕轮轴累加 → 互不覆盖
+    const glbWheels = [];
+    ['wheel_fl','wheel_fr','wheel_rl','wheel_rr'].forEach(n => {
+      const w = model.getObjectByName(n); if (!w) return;
+      const wp = new THREE.Vector3(); w.getWorldPosition(wp);
+      const pivot = new THREE.Group();
+      model.add(pivot);
+      pivot.position.copy(model.worldToLocal(wp.clone()));
+      pivot.attach(w);  // 保世界变换换父
+      // 检测轮轴: 包围盒最薄的轴 = 轮轴(胎宽<胎径)
+      const meshes = []; w.traverse(o => { if (o.isMesh) meshes.push(o); });
+      let axle = new THREE.Vector3(1, 0, 0);
+      const m0 = meshes[0];
+      if (m0 && m0.geometry && m0.geometry.attributes.position) {
+        const bb = new THREE.Box3().setFromBufferAttribute(m0.geometry.attributes.position);
+        const ext = bb.getSize(new THREE.Vector3());
+        if (Math.abs(ext.y) <= Math.abs(ext.x) && Math.abs(ext.y) <= Math.abs(ext.z)) axle = new THREE.Vector3(0, 1, 0);
+        else if (Math.abs(ext.z) <= Math.abs(ext.x)) axle = new THREE.Vector3(0, 0, 1);
+      }
+      glbWheels.push({ pivot, meshes, axle, front: n.includes('_f') });
+    });
     // 替换: 把模型塞进原group, 隐藏程序化车身件(保留灯光辅助)
     car.group.add(model);
     car.group.traverse(o => { if (o.isMesh && o.geometry?.type === 'BoxGeometry') o.visible = false; });
     car.bodyMat = null;  // 程序化换色失效, 用模型自带红
-    car.wheels = wheels.length === 4 ? wheels : car.wheels;  // 轮子滚动映射到模型轮
+    car.wheels = glbWheels.length === 4 ? glbWheels : car.wheels;  // 轮子滚动映射到模型轮
     car.photo = true;
-    // 金属车漆质感: PMREM环境反射(全局scene.environment + 材质增强)
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    scene.environment = envTex;  // 全局PBR反射
+    // 金属车漆: clearcoat物理材质 + 全局环境反射(启动时已建)
     const body = model.getObjectByName('body');
     if (body && body.material) {
       const old2 = body.material;
       body.material = new THREE.MeshPhysicalMaterial({
-        color: 0xff0000, metalness: 0.9, roughness: 0.18,
-        clearcoat: 1.0, clearcoatRoughness: 0.06, envMapIntensity: 1.6
+        color: 0xc41e14, metalness: 0.88, roughness: 0.16,
+        clearcoat: 1.0, clearcoatRoughness: 0.05, envMapIntensity: 1.7
       });
       old2.dispose && old2.dispose();
       window.__bodyMat = body.material;  // 多人换色走这里
     }
     model.traverse(o => {
       if (o.isMesh && o.material && o.material.isMeshStandardMaterial && o.name !== 'body') {
-        o.material.envMapIntensity = 1.2;
+        o.material.envMapIntensity = 1.25;
         o.material.needsUpdate = true;
       }
     });
-    pmrem.dispose();
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.25;
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
     window.__photoCarLoaded = true;
   }, undefined, (e) => { console.warn('photo car load failed, keep procedural', e); });
+}
 scene.add(car.group);
 
 // ---- 漂移烟雾 (参考DriftSmoke: 粒子sprite池) ----
@@ -750,6 +865,35 @@ function keyState(code) {
 addEventListener('keydown', e => { keys[e.code] = true; if (e.code==='Space') e.preventDefault(); });
 addEventListener('keyup',   e => keys[e.code] = false);
 
+// ---- 模拟输入层: W/A/S/D/Space 全部缓入缓出 (开关键 → 模拟量, 操控手感核心) ----
+const analog = { throttle: 0, brake: 0, steer: 0, handbrake: 0 };
+const ANALOG_RISE = 5.2;   // 按下→满值 ~0.19s
+const ANALOG_FALL = 7.5;   // 松开→归零 ~0.13s
+const STEER_RISE = 6.0, STEER_FALL = 8.5;
+function updateAnalog(dt) {
+  const wantThrottle = keyState('KeyW') || keyState('ArrowUp');
+  const wantBrake    = keyState('KeyS') || keyState('ArrowDown');
+  const wantLeft     = keyState('KeyA') || keyState('ArrowLeft');
+  const wantRight    = keyState('KeyD') || keyState('ArrowRight');
+  const wantHb       = keyState('Space');
+  const approach = (cur, target, rise, fall) => {
+    const rate = Math.abs(target) > Math.abs(cur) ? rise : fall;
+    return THREE.MathUtils.clamp(cur + Math.sign(target - cur) * rate * dt, 0, 1);
+  };
+  analog.throttle  = approach(analog.throttle,  wantThrottle ? 1 : 0, ANALOG_RISE, ANALOG_FALL);
+  analog.brake     = approach(analog.brake,     wantBrake    ? 1 : 0, ANALOG_RISE, ANALOG_FALL);
+  analog.handbrake = approach(analog.handbrake, wantHb       ? 1 : 0, ANALOG_RISE, ANALOG_FALL);
+  // 转向: 目标 ±1, 向目标缓入; 回正用更快衰减 → 精准对准出弯线路
+  const steerTarget = (wantLeft ? 1 : 0) - (wantRight ? 1 : 0);
+  if (steerTarget !== 0) {
+    analog.steer += Math.sign(steerTarget - analog.steer) * STEER_RISE * dt;
+    analog.steer = THREE.MathUtils.clamp(analog.steer, -1, 1);
+  } else {
+    const decay = STEER_FALL * dt;
+    analog.steer = Math.abs(analog.steer) <= decay ? 0 : analog.steer - Math.sign(analog.steer) * decay;
+  }
+}
+
 // ---- 车辆状态 ----
 const state = {
   pos: new THREE.Vector3(0, 0, 90),      // 起始在环形赛道上
@@ -780,64 +924,66 @@ function tick() {
   requestAnimationFrame(tick);
   const dt = Math.min(clock.getDelta(), 0.05);
 
-  // --- 输入归一 ---
-  const throttle = keyState('KeyW') ? 1 : 0;
-  const braking  = keyState('KeyS') ? 1 : 0;
-  const steer    = (keyState('KeyA') ? 1 : 0) - (keyState('KeyD') ? 1 : 0); // A=左=+
-  const handbrake = keyState('Space') ? 1 : 0;
+  // --- 输入归一 (模拟量: 缓入缓出, 告别开关式突兀操控) ---
+  updateAnalog(dt);
+  const throttle = analog.throttle;
+  const braking  = analog.brake;
+  const steer    = analog.steer;    // A=+1, D=-1 (左正右负)
+  const handbrake = analog.handbrake;
 
-  // --- 转向 (低速助力, 参考实现) ---
+  // --- 转向: 速度衰减最大转角(34°→8.5°), 目标角永远有界, 高速不发疯 ---
   const speedAbs = Math.abs(state.speedMps);
-  const steerScale = 0.132;
-  const lowBoost = THREE.MathUtils.lerp(2.05, 1, THREE.MathUtils.clamp(speedAbs/24, 0, 1));
-  const targetSteer = steer * MAX_STEER_DEG * Math.PI/180 * steerScale * lowBoost * 10;
-  const steerLerp = THREE.MathUtils.clamp(dt * STEER_SENS * 1.9, 0, 1);
+  const steerMax = THREE.MathUtils.lerp(MAX_STEER_DEG, 8.5,
+    THREE.MathUtils.smoothstep(speedAbs, 4, 38));
+  const targetSteer = steer * steerMax * Math.PI/180;
+  const steerLerp = THREE.MathUtils.clamp(dt * 7.0, 0, 1);
   state.steerAngle = THREE.MathUtils.lerp(state.steerAngle, targetSteer, steerLerp);
 
-  // --- 纵向动力 ---
+  // --- 漂移量: 速度 × 转向 × (手刹∩油门) ---
   if (speedAbs < 0.2) {
     state.lateralSpeed = THREE.MathUtils.lerp(state.lateralSpeed, 0, steerLerp);
     state.driftAmount = Math.max(0, state.driftAmount - dt*4);
   } else {
-    // 漂移量: speed × steer × (手刹∩油门) × capability
     const driftSpeedNorm = THREE.MathUtils.clamp((speedAbs - ENTRY_SPEED) / (FULL_SPEED - ENTRY_SPEED), 0, 1);
     const driftSteerNorm = THREE.MathUtils.clamp((Math.abs(steer) - 0.12) / 0.88, 0, 1);
-    const hbNorm = THREE.MathUtils.clamp((handbrake - 0.18) / 0.82, 0, 1);
-    const thNorm = THREE.MathUtils.clamp((throttle - 0.15) / 0.85, 0, 1);
+    const hbNorm = handbrake;
+    const thNorm = throttle;
     const inputNorm = Math.min(hbNorm, thNorm);
-    // M1简化: 无手刹时大转向+油门也可滑(娱乐化"暴力漂移"), 手刹放大
-    const driftTarget = driftSpeedNorm * driftSteerNorm
-      * (inputNorm > 0 ? 1 : 0.45 * thNorm) * DRIFT_CAPABILITY * (handbrake>0 ? 1.15 : 1);
-    const buildRate = THREE.MathUtils.lerp(1.4, 3.1, driftTarget) * 1;
-    const releaseRate = speedAbs > RELEASE_SPEED ? THREE.MathUtils.lerp(2.4,4.2,1-driftTarget) : THREE.MathUtils.lerp(4.2,6,1-driftTarget);
+    const driftTarget = THREE.MathUtils.clamp(driftSpeedNorm * driftSteerNorm
+      * (inputNorm > 0 ? 1 : 0.4 * thNorm) * (handbrake > 0.3 ? 1.2 : 1), 0, 1);
+    const buildRate = THREE.MathUtils.lerp(1.6, 3.4, driftTarget);
+    const releaseRate = speedAbs > RELEASE_SPEED ? 3.0 : 5.0;
     const rate = driftTarget >= state.driftAmount ? buildRate : releaseRate;
     state.driftAmount = THREE.MathUtils.lerp(state.driftAmount, driftTarget, THREE.MathUtils.clamp(dt*rate, 0, 1));
 
-    // 侧滑 + 横摆
-    const driftPower = 1.0;
-    const slipTarget = -steer * speedAbs * (0.3 + state.driftAmount*1.05) * driftPower;
-    const slipLerp = THREE.MathUtils.clamp(dt * (2.2 + state.driftAmount*2.4), 0, 1);
-    // M1无碰撞约束, 侧滑封顶±22m/s防飞出
+    // 侧滑: 抓地时快速归零(指哪打哪), 漂移时维持滑移(可反打方向控制角度)
+    const drifting = state.driftAmount > 0.05;
+    const slipTarget = -steer * Math.min(speedAbs, 26) * (drifting ? (0.30 + state.driftAmount*0.55) : 0.035);
+    const slipRate = drifting ? (1.8 + state.driftAmount*1.6) : 7.5;
     state.lateralSpeed = THREE.MathUtils.clamp(
-      THREE.MathUtils.lerp(state.lateralSpeed, slipTarget, slipLerp), -22, 22);
+      THREE.MathUtils.lerp(state.lateralSpeed, slipTarget, THREE.MathUtils.clamp(dt*slipRate, 0, 1)), -14, 14);
   }
 
-  // 加速/刹车/阻力
+  // --- 纵向: 引擎/刹车/滚阻/风阻 (量纲修正, 极速恢复到300km/h) ---
   let accel = 0;
-  if (throttle) {
-    const powerCurve = 1 - THREE.MathUtils.clamp(speedAbs/(TOP_SPEED_KPH/3.6), 0, 1) * 0.75;
-    accel += (100/ZERO_TO_100/3.6) * 2.4 * powerCurve * (nowSec() < boostUntil ? 1.4 : 1);
+  if (throttle > 0.01) {
+    const powerCurve = 1 - THREE.MathUtils.clamp(speedAbs/(TOP_SPEED_KPH/3.6), 0, 1) * 0.6;
+    accel += (100/ZERO_TO_100/3.6) * 2.9 * powerCurve * throttle * (nowSec() < boostUntil ? 1.45 : 1);
   }
-  if (braking) accel -= state.speedMps > 0.5 ? BRAKE_DECEL*0.55 : (accel = -8, -8);
-  if (handbrake) accel -= Math.sign(state.speedMps) * 10 * (state.driftAmount>0.3 ? 0.3 : 1);
-  accel -= state.speedMps * ROLL_RESIST * 0.55 * dt * 10 / Math.max(speedAbs,1) * Math.min(speedAbs,1);
-  accel -= AERO_DRAG * state.speedMps * speedAbs * 100;
-  if (!throttle && !braking && Math.abs(state.speedMps) < 0.3) state.speedMps = 0;
+  if (braking > 0.01) {
+    if (state.speedMps > 0.4) accel -= BRAKE_DECEL * 0.55 * braking;
+    else if (state.speedMps > -9.5) accel -= 7.5 * braking;   // 倒车
+  }
+  if (handbrake > 0.05) accel -= Math.sign(state.speedMps) * 9.5 * handbrake * (state.driftAmount > 0.3 ? 0.35 : 1);
+  if (speedAbs > 0.01) accel -= Math.sign(state.speedMps) * 1.1;          // 滚动阻力
+  accel -= AERO_DRAG * state.speedMps * speedAbs;                          // 风阻 ∝ v²
+  if (!throttle && !braking && speedAbs < 0.35) state.speedMps = 0;
   state.speedMps = THREE.MathUtils.clamp(state.speedMps + accel*dt, -9.5, TOP_SPEED_KPH/3.6);
 
   // --- 运动积分 ---
+  // 阿克曼转向 + 漂移横摆助力(漂移时方向助力让反打更可控)
   const yawRate = (state.speedMps / WHEELBASE) * Math.tan(state.steerAngle)
-                + (state.driftAmount > 0.001 ? steer * (0.35 + state.driftAmount*1.15) * driftPower * Math.min(speedAbs/10,1) : 0);
+                + (state.driftAmount > 0.001 ? steer * (0.32 + state.driftAmount*1.05) * Math.min(speedAbs/10,1) : 0);
   state.heading += yawRate * dt;
 
   _fwd.set(Math.sin(state.heading), 0, Math.cos(state.heading));
@@ -887,17 +1033,35 @@ function tick() {
     const slipVis = THREE.MathUtils.clamp(state.lateralSpeed * 0.06, -1.19, 1.19);
     car.group.rotation.y += slipVis * state.driftAmount * 0.42;
   }
-  // 车轮: 前轮转向 + 全轮滚动
+  // 车轮: 前轮转向 + 全轮滚动 (两种结构: 程序化{group}/GLB{pivot,meshes,axle})
   for (const w of car.wheels) {
-    if (w.front) w.group.rotation.y = state.steerAngle * 1.45;
-    w.group.children.forEach(m => m.rotation.x += state.speedMps * dt / 0.38);
+    if (w.pivot) {
+      if (w.front) w.pivot.rotation.y = state.steerAngle;
+      const roll = state.speedMps * dt / 0.36;
+      for (const m of w.meshes) m.rotateOnAxis(w.axle, roll);
+    } else {
+      if (w.front) w.group.rotation.y = state.steerAngle * 1.2;
+      w.group.children.forEach(m => m.rotation.x += state.speedMps * dt / 0.38);
+    }
   }
 
-  // --- 追逐相机 (平滑跟随) ---
+  // 尾灯刹车增亮
+  if (car.group.userData.tailMat) {
+    car.group.userData.tailMat.color.setHex(braking > 0.1 ? 0xff2418 : 0x7a1010);
+  }
+
+  // --- 追逐相机 (平滑跟随 + 速度动态FOV) ---
   const camDist = 9 + speedAbs * 0.14;
   _tmp.copy(state.pos).addScaledVector(_fwd, -camDist); _tmp.y = 4.2 + speedAbs*0.05;
   camera.position.lerp(_tmp, 1 - Math.pow(0.0012, dt));
   camera.lookAt(state.pos.x, 1.2, state.pos.z);
+  const targetFov = 66 + speedAbs * 0.55;   // 高速视野拉伸, 速度感
+  camera.fov += (targetFov - camera.fov) * Math.min(dt * 3, 1);
+  camera.updateProjectionMatrix();
+
+  // 阴影盒跟随车(收紧后必须每帧同步, 否则出圈影子消失)
+  sun.position.set(state.pos.x + 60, 90, state.pos.z + 30);
+  sun.target.position.copy(state.pos);
 
   // --- HUD ---
   window.__dbg = { spd: state.speedMps, drift: state.driftAmount, keys: {...keys} };
